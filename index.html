@@ -36,7 +36,7 @@ dialog::backdrop{background:rgba(0,40,40,.18)}
 <div id="bar">
   <button type="button" id="menu-toggle" class="win-button" aria-controls="menu" aria-expanded="false">狂刀小可愛</button>
   <span class="separator" aria-hidden="true"></span>
-  <span id="hint">點一下狂刀，或拖他到別處</span>
+  <span id="hint">點一下做動作，連點兩下聽語音</span>
   <time id="clock"></time>
 </div>
 <nav id="menu" aria-label="狂刀小可愛功能" hidden>
@@ -93,7 +93,11 @@ let x = 0, y = 0, destination = null, dragging = null;
 let mode = 'stand', modeStart = performance.now(), nextMove = 0;
 let lastTick = modeStart, lastFrame = '', talkIndex = 0, lastClick = -Infinity;
 let walking = true, running = true, audioReady = false, nextVoice = Infinity;
+let audioStarting = false;
 const player = new Audio();
+player.addEventListener('playing', () => { audioStarting = false; });
+player.addEventListener('ended', () => { audioStarting = false; });
+player.addEventListener('error', () => { audioStarting = false; });
 let menuAnchor = null;
 try { voice.checked = localStorage.getItem('crazy-blade-voice') !== 'off'; } catch {}
 
@@ -107,10 +111,12 @@ function scheduleVoice(now) {
   nextVoice = now + 10000 + Math.random() * 13000;
 }
 function playSound(name, requested = false) {
-  if (!voice.checked || !audio[name] || (!audioReady && !requested)) return;
-  if (!requested && !player.paused && !player.ended) return;
+  if (!voice.checked || !audio[name] || (!audioReady && !requested)) return false;
+  if (audioStarting || (!player.paused && !player.ended)) return false;
+  audioStarting = true;
   player.src = audio[name];
-  player.play().catch(() => {});
+  player.play().catch(() => { audioStarting = false; });
+  return true;
 }
 function setMode(name, now = performance.now()) {
   mode = name;
@@ -125,7 +131,7 @@ function interact(name) {
   if (!running || dragging) return;
   destination = null;
   if (name === 'talk') {
-    playSound(speechClips[talkIndex++ % speechClips.length], true);
+    if (playSound(speechClips[talkIndex % speechClips.length], true)) talkIndex++;
     scheduleVoice(performance.now());
   }
   setMode(name === 'shake' ? 'shake' : 'emote');
@@ -209,8 +215,9 @@ function finishGrab(event, canceled = false) {
     interact('shake');
   }
   else {
-    interact(now - lastClick < 450 ? 'talk' : 'emote');
-    lastClick = now;
+    const doubleClick = now - lastClick < 450;
+    interact(doubleClick ? 'talk' : 'emote');
+    lastClick = doubleClick ? -Infinity : now;
   }
 }
 pet.addEventListener('pointerup', event => finishGrab(event));
@@ -253,9 +260,8 @@ function enableAudio() {
   if (audioReady) return;
   audioReady = true;
   scheduleVoice(performance.now());
-  if (running) playSound('WAV3');
 }
-document.addEventListener('pointerup', enableAudio);
+document.addEventListener('pointerdown', enableAudio);
 document.addEventListener('keydown', enableAudio);
 const roamButton = menu.querySelector('[data-action=roam]');
 function updateRoam() { roamButton.textContent = walking ? '暫停走動' : '恢復走動'; }
@@ -273,7 +279,10 @@ menu.addEventListener('click', event => {
   else interact(action);
 });
 voice.addEventListener('change', () => {
-  if (!voice.checked) player.pause();
+  if (!voice.checked) {
+    player.pause();
+    audioStarting = false;
+  }
   else scheduleVoice(performance.now());
   try { localStorage.setItem('crazy-blade-voice', voice.checked ? 'on' : 'off'); } catch {}
 });
@@ -282,6 +291,7 @@ settings.addEventListener('close', () => { if (running) settle(); });
 document.querySelector('#exit').addEventListener('click', () => {
   running = false;
   player.pause();
+  audioStarting = false;
   settings.close();
   pet.hidden = true;
   hint.textContent = '已結束。按「狂刀小可愛」重新開啟。';
@@ -289,7 +299,7 @@ document.querySelector('#exit').addEventListener('click', () => {
 function resume() {
   running = true;
   pet.hidden = false;
-  hint.textContent = '點一下狂刀，或拖他到別處';
+  hint.textContent = '點一下做動作，連點兩下聽語音';
   settle();
   nextMove = 0;
   place(x, y);
